@@ -38,3 +38,37 @@ npx @marp-team/marp-cli --watch 1_overview.md --html
 ## 対象読者
 
 エンジニア（開発者・運用担当者）
+
+## Gamma API生成
+
+Marp MD ファイルを [Gamma](https://gamma.app/) API でスライドに変換します。
+
+### 前提条件
+
+- Gamma の **Pro プラン以上**のアカウントが必要です
+- APIキーの取得: [https://gamma.app/developers](https://gamma.app/developers)
+
+### 環境変数の設定
+
+```bash
+cp .env.example .env
+# .env を開いて GAMMA_API_KEY= の後ろに取得したAPIキーを記入
+```
+
+任意: テーマを指定する場合は `GAMMA_THEME_ID=<テーマID>` も追記してください。
+
+### 実行コマンド
+
+```bash
+# 全MDファイルを一括変換
+make gamma
+
+# 指定ファイルのみ変換
+make gamma FILE=1_overview.md
+make gamma FILE=2_usage.md
+```
+
+### 出力
+
+- 変換完了後、ターミナルに **Gamma URL** と **PPTXダウンロードURL** が表示されます
+- 生成されたURLは `dist/gamma_urls.txt` に日時付きで追記保存されます
