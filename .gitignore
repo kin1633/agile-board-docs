@@ -1,0 +1,7 @@
+# 環境変数・シークレット
+.env
+.env.*
+!.env.example
+
+# ビルド成果物（CI/CDで生成）
+dist/
