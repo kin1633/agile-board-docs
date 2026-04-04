@@ -20,11 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Marp CLI でスライドをビルド
-        uses: docker://marpteam/marp-cli:latest
+      - uses: actions/setup-node@v5
         with:
-          entrypoint: marp
-          args: --html --allow-local-files --output dist/ 1_overview.md 2_usage.md
+          node-version: 24
+
+      - name: Marp CLI でスライドをビルド
+        run: npx --yes @marp-team/marp-cli@latest --html --allow-local-files --output dist/ 1_overview.md 2_usage.md
 
       - name: index.html を生成
         run: |
