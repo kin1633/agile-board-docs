@@ -25,7 +25,10 @@ jobs:
           node-version: 24
 
       - name: Marp CLI でスライドをビルド
-        run: npx --yes @marp-team/marp-cli@latest --html --allow-local-files --output dist/ 1_overview.md 2_usage.md
+        run: |
+          mkdir -p dist
+          npx --yes @marp-team/marp-cli@latest --html --allow-local-files 1_overview.md -o dist/1_overview.html
+          npx --yes @marp-team/marp-cli@latest --html --allow-local-files 2_usage.md -o dist/2_usage.html
 
       - name: index.html を生成
         run: |
