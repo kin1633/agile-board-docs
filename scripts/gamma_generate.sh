@@ -37,6 +37,19 @@ if ! command -v curl &>/dev/null; then
 fi
 
 # ─────────────────────────────────────────────
+# .env ファイルの読み込み（存在する場合）
+# ─────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/../.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  # export されていない変数も環境変数として読み込む
+  set -o allexport
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +o allexport
+fi
+
+# ─────────────────────────────────────────────
 # 環境変数チェック
 # ─────────────────────────────────────────────
 if [[ -z "${GAMMA_API_KEY:-}" ]]; then

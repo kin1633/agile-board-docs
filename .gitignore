@@ -5,3 +5,9 @@
 
 # ビルド成果物（CI/CDで生成）
 dist/
+
+# macOS
+.DS_Store
+
+# Claude Code ローカル設定（パーミッション等、個人環境依存）
+.claude/settings.local.json
