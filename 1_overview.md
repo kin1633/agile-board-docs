@@ -14,23 +14,27 @@ GitHub 連携アジャイルボード — エンジニア向け設計解説
 
 | 機能 | 概要 |
 |---|---|
-| **ダッシュボード** | ベロシティ・バーンダウン・KPT サマリーを一覧表示 |
-| **スプリント管理** | GitHub マイルストーン/Iteration からスプリントを自動作成 |
+| **ダッシュボード** | バーンダウン・KPT サマリー・進行中 Issue を一覧表示 |
+| **スプリント管理** | GitHub Projects Iteration からスプリントを自動同期 |
 | **エピック（案件）管理** | Issue を案件単位でまとめ、工数・進捗を集計 |
-| **マイルストーン** | 中長期ゴールを月次単位で管理 |
-| **レトロスペクティブ** | スプリントごとの KPT（Keep/Problem/Try）を記録 |
-| **GitHub 同期** | Issue・ラベル・スプリントを GitHub から自動同期 |
+| **マイルストーン** | 月次ゴールをアプリ独自管理（GitHub 非依存） |
+| **レトロスペクティブ** | スプリントごとの KPT（Keep/Problem/Try）を記録・履歴表示 |
+| **実績入力（ワークログ）** | 週次タイムライン形式で作業実績を入力・集計 |
+| **勤怠管理** | 休暇・早退・遅刻を週単位で管理 |
+| **GitHub 同期** | Issue・ラベル・スプリントを GitHub Projects から自動同期 |
 
 ---
 
 ## 技術スタック
 
 ```
-Backend:   PHP 8.4 / Laravel 13
-Frontend:  React 19 / Inertia.js v2 / Tailwind CSS v4
+Backend:   PHP 8.3+ / Laravel 13
+Frontend:  React 19 / TypeScript / Inertia.js v2 / Tailwind CSS v4
 DB:        SQLite（開発）/ MySQL・PostgreSQL（本番対応）
 認証:       GitHub OAuth（Socialite）
 ルーティング: Laravel Wayfinder（型安全な TypeScript ルート生成）
+グラフ:     Recharts
+テスト:     Pest v4
 ```
 
 ---
@@ -40,30 +44,36 @@ DB:        SQLite（開発）/ MySQL・PostgreSQL（本番対応）
 ```
 1. ユーザーが「GitHub でログイン」をクリック
 2. GitHub OAuth → アクセストークン取得
-3. users テーブルに github_id / github_token を保存
+3. users テーブルに github_id / github_token を upsert
 4. 以降の GitHub API 呼び出しはこの github_token を使用
 ```
 
-> **重要**: `github_token` は GitHub 同期にも使われるため、
-> Projects スコープが必要な場合はトークン再取得が必要
+> **スコープ**: `read:user`（ユーザー情報）、`repo`（プライベートリポジトリ）
+> Iteration モードを使う場合は一度再ログインして `project` スコープを取得する必要あり
 
 ---
 
 ## データモデル概要（ER 図）
 
 ```
-repositories
-  └─ sprints（github_iteration_id または milestone_id）
+users
+  └─ members（ログイン時に自動登録）
+
+repositories（active フラグで同期対象を制御）
+  └─ sprints（github_iteration_id）
        └─ issues（github_issue_number）
             └─ issues（parent_issue_id: Sub-issues/Tasks）
 
-repositories
-  └─ milestones（github_milestone_id または github_iteration_id）
+milestones（year + month で一意。アプリ独自管理）
+  └─ sprints（milestone_id: 手動紐付け）
 
 epics
   └─ issues（epic_id: Story Issues）
 
 labels ←→ issues（issue_labels pivot）
+
+work_logs（実績入力）
+attendance（勤怠記録）
 ```
 
 ---
@@ -79,34 +89,20 @@ Epic（案件）
 
 | 種類 | 用途 | 主要フィールド |
 |---|---|---|
-| **Epic** | 案件・大機能単位 | status, due_date, started_at |
+| **Epic** | 案件・大機能単位 | due_date, started_at, priority |
 | **Story** | スプリントに紐付く Issue | story_points, exclude_velocity |
-| **Task** | Sub-issue（工数管理） | estimated_hours, actual_hours |
+| **Task** | Sub-issue（工数管理） | estimated_hours（手動）, actual_hours（ワークログ集計） |
 
 ---
 
-## スプリントの2モード
+## スプリント同期モード
 
-| | Milestone モード | Iteration モード |
-|---|---|---|
-| **条件** | `github_project_number` 未設定 | `github_project_number` 設定済み |
-| **同期元** | GitHub REST Milestones API | GitHub Projects v2 GraphQL API |
-| **スプリント識別** | `milestone_id` | `github_iteration_id` |
-| **Milestone** | GitHub マイルストーン | `Monthly` Iteration フィールド |
-| **後方互換** | ✅ デフォルト | — |
+| 条件 | 動作 |
+|---|---|
+| `github_project_number` **設定済み** | **Iteration モード**: GitHub Projects の `Sprint` フィールドからスプリントを自動同期 |
+| `github_project_number` **未設定** | 同期なし: スプリントは手動管理（tinker 等で直接登録） |
 
----
-
-## Iteration モード詳細
-
-GitHub Projects v2 に以下の Iteration フィールドを作成:
-
-| フィールド名 | 用途 | 設定での変更 |
-|---|---|---|
-| `Sprint` | スプリント（週次） | `sprint_iteration_field` |
-| `Monthly` | マイルストーン（月次） | `monthly_iteration_field` |
-
-> フィールド名は `settings` テーブルで変更可能
+> マイルストーンはどちらのモードでも **GitHub と同期しない**。アプリ独自管理。
 
 ---
 
@@ -115,16 +111,12 @@ GitHub Projects v2 に以下の Iteration フィールドを作成:
 ```
 POST /sync → GitHubSyncService::syncAll(githubToken)
   └─ アクティブなリポジトリ全件
-      ├─ [Milestone モード] syncMilestones()
-      │   └─ REST API: /repos/{owner}/{repo}/milestones
-      │       └─ syncIssuesForMilestone()
-      │
       ├─ [Iteration モード] syncProjectIterations()
       │   └─ GraphQL: projectV2.fields / projectV2.items
       │       ├─ [Sprint フィールド] → sprints upsert
       │       │   └─ syncIssuesForIteration()
       │       │       └─ syncSubIssues()（Sub-issues Preview API）
-      │       └─ [Monthly フィールド] → milestones upsert
+      │       └─ ※ Monthly フィールドによる Milestone 同期は廃止
       │
       ├─ syncLabels()
       └─ repositories.synced_at 更新
@@ -141,10 +133,11 @@ POST /sync → GitHubSyncService::syncAll(githubToken)
 |---|---|---|
 | sprints | `start_date` | アプリ側で手動設定 |
 | sprints | `working_days` | GitHub に存在しない |
+| sprints | `milestone_id` | マイルストーン紐付けはアプリ側で手動管理 |
 | issues | `story_points` | GitHub に存在しない |
 | issues | `exclude_velocity` | アプリ独自設定 |
 | issues | `estimated_hours` | ユーザー入力 |
-| issues | `actual_hours` | ユーザー入力 |
+| issues | `actual_hours` | ユーザー入力（ワークログから集計） |
 | epics | `started_at` | 未設定の場合のみ自動設定 |
 
 ---
@@ -183,28 +176,29 @@ resolveRepository(fallback, repo_owner, repo_name):
 
 ## ページネーション対応
 
-**REST API**（Milestone・Issue・Label）
-→ `Link` ヘッダーを解析して全ページ自動取得（100件/ページ）
-
 **GraphQL API**（Project Items）
-→ カーソルベースページネーション（`after: $cursor`）で100件ずつ全件取得
+→ カーソルベースページネーション（`after: $cursor`）で 100件ずつ全件取得
+
+**REST API**（Issue・Label）
+→ `Link` ヘッダーを解析して全ページ自動取得（100件/ページ）
 
 ---
 
 ## 着手日目安の計算
 
 ```
-estimated_start_date = due_date − ceil(予定工数 / チーム日次工数) 営業日
+開発完了目標日 = due_date − リリースバッファ日数（営業日）
+着手日目安    = 開発完了目標日 − ceil(予定工数 / チーム日次工数) 営業日
 ```
+
+> 営業日の計算は土日に加えて**祝日管理に登録された祝日も除外**
+> DB には保存されない表示専用の値（毎回計算）
 
 | 条件 | 結果 |
 |---|---|
-| `due_date` 未設定 | `null`（非表示） |
-| 予定工数が 0 | `null`（非表示） |
-| チームメンバー未登録（daily_hours 合計 = 0） | `null`（非表示） |
-
-> チーム日次工数 = メンバー全員の `daily_hours` 合計
-> DB には保存されない（毎回計算される表示専用の値）
+| `due_date` 未設定 | 非表示 |
+| 予定工数が 0 | 非表示 |
+| チームメンバー未登録（daily_hours 合計 = 0） | 非表示 |
 
 ---
 
@@ -225,10 +219,27 @@ GitHub 同期後、以下の条件を満たすエピックに**着手日を自�
 
 ---
 
+## マイルストーン管理
+
+マイルストーンは **GitHub と完全に独立したアプリ独自管理**。
+
+- `/milestones` アクセス時に `MilestoneGeneratorService` が現在月 −6〜+12ヶ月（計19ヶ月）を自動補完
+- 手動作成・削除不可。タイトル・ゴール・ステータス・日付の編集のみ可能
+- スプリントとの紐付けはマイルストーン詳細画面から手動設定
+
+| フィールド | 自動計算方法 |
+|---|---|
+| `started_at`（デフォルト） | 月の第1月曜日 |
+| `due_date`（デフォルト） | 翌月の第1月曜日の前日 |
+
+---
+
 ## まとめ
 
 - **GitHub OAuth** でログインし、github_token で API 同期
-- **2モード**（Milestone / Iteration）で柔軟なスプリント管理
+- **Iteration モード**（`github_project_number` 設定時）でスプリント自動同期
 - **3階層**（Epic → Story → Task）でポイント＋工数を分離管理
+- **マイルストーン**は GitHub 非依存のアプリ独自管理に完全移行
+- **ワークログ・勤怠管理**で実績をタイムライン形式で記録
 - **保護フィールド**により手動設定値が同期で失われない
 - **ベロシティ**はラベル・フラグで細かく除外制御可能
